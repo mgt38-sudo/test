@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>연주시차 시뮬레이터</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* 캔버스를 포함하는 컨테이너 */
+        #canvas-container {
+            width: 100%;
+            max-width: 800px;
+            aspect-ratio: 16 / 10; /* 너비 대비 높이 비율 유지 */
+            background-color: #0d1117; /* 어두운 우주 배경 */
+            margin: 0 auto;
+            border-radius: 12px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+        /* Tailwind에서 정의하기 어려운 커스텀 슬라이더 스타일 */
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 16px;
+            height: 16px;
+            background: #fef3c7; /* yellow-100 */
+            cursor: pointer;
+            border-radius: 50%;
+        }
+    </style>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                    },
+                    colors: {
+                        'space-dark': '#0d1117',
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+<body class="bg-gray-900 text-white font-sans p-4 sm:p-8">
+    <div class="max-w-6xl mx-auto">
+        <h1 class="text-3xl sm:text-4xl font-bold text-center text-yellow-300 mb-6">🔭 연주시차 (Stellar Parallax) 시뮬레이터</h1>
+        
+        <div class="flex flex-col lg:flex-row gap-6">
+            
+            <!-- 시뮬레이션 영역 -->
+            <div class="lg:w-2/3">
+                <div id="canvas-container">
+                    <canvas id="parallaxCanvas"></canvas>
+                </div>
+
+                <!-- 컨트롤 패널 -->
+                <div class="bg-gray-800 p-4 mt-6 rounded-xl shadow-lg">
+                    <h2 class="text-xl font-semibold text-yellow-400 mb-4">⚙️ 시뮬레이션 조작</h2>
+                    
+                    <div class="space-y-4">
+                        <!-- 별 X 거리 조절 -->
+                        <div>
+                            <label for="distanceSlider" class="block text-sm font-medium mb-1">별 X 거리 조절 (AU 대비 상대 거리)</label>
+                            <input type="range" id="distanceSlider" min="200" max="600" value="350" step="10" 
+                                class="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer">
+                            <span id="distanceValue" class="text-sm text-gray-400 mt-1 block text-right">350</span>
+                        </div>
+                        
+                        <!-- 애니메이션 속도 조절 -->
+                        <div>
+                            <label for="speedSlider" class="block text-sm font-medium mb-1">지구 공전 속도</label>
+                            <input type="range" id="speedSlider" min="0.001" max="0.02" value="0.005" step="0.001" 
+                                class="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer">
+                            <span id="speedValue" class="text-sm text-gray-400 mt-1 block text-right">0.005x</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 정보 표시 영역 -->
+            <div class="lg:w-1/3">
+                <div class="bg-gray-800 p-6 rounded-xl shadow-lg h-full">
+                    <h2 class="text-xl font-semibold text-sky-400 mb-4">🌟 연주시차의 원리</h2>
+                    
+                    <div class="space-y-4">
+                        <div class="bg-gray-700 p-3 rounded-lg">
+                            <h3 class="font-bold text-lg text-yellow-300">핵심 공식</h3>
+                            <p class="mt-1 text-sm">
+                                <span class="font-mono bg-gray-600 p-1 rounded">
+                                    $$d(\text{pc}) = \frac{1}{p(\text{arcsec})}$$
+                                </span>
+                            </p>
+                            <p class="text-xs text-gray-400 mt-2">
+                                * $d$는 거리(파섹, pc), $p$는 연주시차(초, arcsec)
+                            </p>
+                        </div>
+
+                        <div class="bg-gray-700 p-3 rounded-lg">
+                            <h3 class="font-bold text-lg text-sky-300">현재 값</h3>
+                            <ul class="text-sm space-y-2 mt-2">
+                                <li id="starXData" class="text-orange-300 border-b border-gray-600 pb-1"></li>
+                                <li id="starYData" class="text-yellow-300 border-b border-gray-600 pb-1"></li>
+                            </ul>
+                        </div>
+                        
+                        <div class="text-xs text-gray-400 pt-2">
+                            <p>* **연주시차**는 지구 공전 궤도의 반지름(1AU)을 밑변으로 하고 별까지의 거리를 높이로 하는 직각삼각형에서 별의 위치에 있는 각도($p$)의 절반입니다. 시뮬레이터에서는 시각적인 이해를 돕기 위해 $p$를 직각삼각형의 각으로 표시합니다.</p>
+                            <p>* **시차의 크기**는 별까지의 거리가 가까울수록 커집니다. (별 X 확인)</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 캔버스 설정
+        const canvas = document.getElementById('parallaxCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // 고정된 시뮬레이션 좌표계 정의 (화면 크기 변화에 무관하게 내부 비율 유지)
+        const SIM_WIDTH = 800;
+        const SIM_HEIGHT = 550;
+        const SUN_POS = { x: SIM_WIDTH / 2, y: SIM_HEIGHT / 2 + 50 }; // 태양 위치를 약간 아래로 이동
+        const AU_CANVAS_RADIUS = 150; // 1 AU에 해당하는 캔버스 단위 거리
+
+        // 상태 변수
+        let earthAngle = 0; // 지구의 현재 공전 각도 (라디안)
+        let animationSpeed = 0.005; // 공전 속도 (프레임당 라디안)
+        
+        // 별 데이터 초기값
+        const STARS = [
+            { name: '별 X', distance: 350, color: '#f97316', id: 'starX' }, // orange-500
+            { name: '별 Y', distance: 600, color: '#facc15', id: 'starY' }  // yellow-400
+        ];
+
+        // --- 계산 및 변환 함수 ---
+        
+        // 연주시차 및 거리 계산 함수
+        function calculateParallaxData(distance) {
+            // p_rad = atan(AU / distance)
+            const p_rad_visual = Math.atan(AU_CANVAS_RADIUS / distance);
+
+            // 실제 과학적 관계를 반영하기 위한 스케일링 (1pc = 1 arcsec)
+            // atan(1 AU / 1 pc) = 1 arcsec
+            // 여기서 AU_CANVAS_RADIUS를 1 AU로, distance를 pc 단위로 가정할 수 없으므로,
+            // 시각적인 p_rad_visual을 이용하여 d=1/p 공식에 맞게 p_arcsec를 "시뮬레이션"합니다.
+            
+            // 임의의 스케일 팩터 (시차를 작게 만들어서 arcsec 단위처럼 보이게 함)
+            const PARALLAX_SCALE_FACTOR = 1000; 
+            const p_arcsec = (p_rad_visual * 180 / Math.PI * 3600) / PARALLAX_SCALE_FACTOR;
+            
+            // 거리(pc) = 1 / 연주시차(arcsec)
+            const distance_pc = 1 / p_arcsec;
+
+            return {
+                p_rad: p_rad_visual,
+                p_arcsec: p_arcsec,
+                distance_pc: distance_pc
+            };
+        }
+
+        // --- 캔버스 크기 조정 및 초기화 ---
+
+        function resizeCanvas() {
+            const container = document.getElementById('canvas-container');
+            // 캔버스 물리적 크기를 컨테이너에 맞춤
+            canvas.width = container.clientWidth;
+            canvas.height = container.clientHeight;
+        }
+
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        // --- 렌더링 함수 ---
+
+        function drawParallaxDiagram() {
+            // 1. 캔버스 초기화 및 변환 (화면 중앙 정렬을 위해)
+            ctx.fillStyle = '#0d1117';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // SIM_WIDTH/SIM_HEIGHT를 실제 캔버스 크기에 맞게 스케일링 및 이동
+            const scaleX = canvas.width / SIM_WIDTH;
+            const scaleY = canvas.height / SIM_HEIGHT;
+            const scale = Math.min(scaleX, scaleY); // 최소값으로 비율 유지
+            
+            ctx.save();
+            // 중앙 정렬 및 스케일 적용
+            ctx.translate(canvas.width / 2 - (SIM_WIDTH / 2) * scale, canvas.height / 2 - (SIM_HEIGHT / 2) * scale);
+            ctx.scale(scale, scale);
+            
+            // 고정 배경 별 (배경의 원형 호)
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.arc(SUN_POS.x, SUN_POS.y, 800, 0, Math.PI * 2);
+            ctx.stroke();
+            
+            // 2. 태양 그리기
+            ctx.fillStyle = '#fdb813'; // Sun color
+            ctx.beginPath();
+            ctx.arc(SUN_POS.x, SUN_POS.y, 15, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = 'white';
+            ctx.font = '14px Noto Sans KR';
+            ctx.fillText('태양', SUN_POS.x + 20, SUN_POS.y);
+
+            // 3. 지구 궤도 그리기
+            ctx.strokeStyle = '#2563eb'; // blue-700
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(SUN_POS.x, SUN_POS.y, AU_CANVAS_RADIUS, 0, Math.PI * 2);
+            ctx.stroke();
+
+            // 4. 지구 위치 계산
+            const earthX = SUN_POS.x + AU_CANVAS_RADIUS * Math.cos(earthAngle);
+            const earthY = SUN_POS.y + AU_CANVAS_RADIUS * Math.sin(earthAngle);
+
+            // 6개월 전/후 (A/B 지점)
+            const angleA = Math.PI * 0; // A: 0 라디안 (오른쪽)
+            const angleB = Math.PI * 1; // B: 180도 (왼쪽)
+            
+            const earthAX = SUN_POS.x + AU_CANVAS_RADIUS * Math.cos(angleA);
+            const earthAY = SUN_POS.y + AU_CANVAS_RADIUS * Math.sin(angleA);
+            const earthBX = SUN_POS.x + AU_CANVAS_RADIUS * Math.cos(angleB);
+            const earthBY = SUN_POS.y + AU_CANVAS_RADIUS * Math.sin(angleB);
+
+            // 4-1. A 지점 그리기
+            ctx.fillStyle = '#3b82f6';
+            ctx.beginPath();
+            ctx.arc(earthAX, earthAY, 8, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = 'white';
+            ctx.fillText('A', earthAX + 10, earthAY + 5);
+
+            // 4-2. B 지점 그리기
+            ctx.fillStyle = '#3b82f6';
+            ctx.beginPath();
+            ctx.arc(earthBX, earthBY, 8, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = 'white';
+            ctx.fillText('B', earthBX - 20, earthBY + 5);
+
+            // 4-3. 현재 지구 그리기
+            ctx.fillStyle = '#3b82f6'; // blue-500
+            ctx.beginPath();
+            ctx.arc(earthX, earthY, 10, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = 'white';
+            ctx.fillText('지구', earthX + 15, earthY + 5);
+
+
+            // 5. 별 그리기 및 시차/시선 표시
+            STARS.forEach(star => {
+                const data = calculateParallaxData(star.distance);
+                star.data = data;
+                
+                // 별 위치 (Y축은 SIM_HEIGHT 중앙 기준, 별은 위쪽에 위치)
+                const starYPos = SUN_POS.y - star.distance;
+                const starPos = { x: SUN_POS.x, y: starYPos };
+
+                // 별 그리기
+                ctx.fillStyle = star.color;
+                ctx.beginPath();
+                ctx.arc(starPos.x, starPos.y, 12, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = 'white';
+                ctx.font = '16px Noto Sans KR';
+                ctx.fillText(star.name, starPos.x + 15, starPos.y + 5);
+
+                // --- 연주시차($p$) 각 표시 (Sun-Star-Earth triangle) ---
+                
+                // 태양에서 별까지의 기준선 (중앙 점선)
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
+                ctx.setLineDash([5, 5]);
+                ctx.beginPath();
+                ctx.moveTo(SUN_POS.x, SUN_POS.y);
+                ctx.lineTo(starPos.x, starPos.y);
+                ctx.stroke();
+                ctx.setLineDash([]); // 다시 실선으로 설정
+
+                // 연주시차 각 (직각삼각형의 각)
+                // 각은 A 지점에서 관측 시 (x축 기준)
+                const starEarthX = SUN_POS.x + AU_CANVAS_RADIUS * Math.cos(angleA); // Earth A X
+                const starEarthY = SUN_POS.y + AU_CANVAS_RADIUS * Math.sin(angleA); // Earth A Y
+                
+                // 별-태양-A지점 각도 (직각삼각형)
+                const centerAngle = Math.atan2(starEarthY - starPos.y, starEarthX - starPos.x); // 별에서 A를 바라보는 각
+                const sunAngle = Math.atan2(SUN_POS.y - starPos.y, SUN_POS.x - starPos.x); // 별에서 태양을 바라보는 각 (항상 -PI/2)
+                
+                const startAngle = sunAngle; // 별에서 태양 방향
+                const endAngle = centerAngle; // 별에서 A 방향
+
+                ctx.strokeStyle = star.color;
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                // arc(x, y, radius, startAngle, endAngle)
+                const arcRadius = 30; // 호의 반지름
+                ctx.arc(starPos.x, starPos.y, arcRadius, startAngle, endAngle);
+                ctx.stroke();
+                
+                // 연주시차($p$) 텍스트
+                const textAngle = (startAngle + endAngle) / 2;
+                const textX = starPos.x + (arcRadius + 10) * Math.cos(textAngle);
+                const textY = starPos.y + (arcRadius + 10) * Math.sin(textAngle);
+                ctx.fillStyle = star.color;
+                ctx.font = '14px Noto Sans KR';
+                ctx.fillText(`p: ${data.p_arcsec.toFixed(3)}''`, textX, textY);
+
+                // --- 시선(Line of Sight) 그리기 ---
+                
+                // 현재 지구 위치에서 별까지의 시선
+                ctx.strokeStyle = star.color;
+                ctx.setLineDash([3, 3]);
+                ctx.lineWidth = 1;
+                
+                // 시선 1: 지구 현재 위치 -> 별
+                ctx.beginPath();
+                ctx.moveTo(earthX, earthY);
+                ctx.lineTo(starPos.x, starPos.y);
+                
+                // 시선 2: 별 -> 배경 별 (위쪽으로 길게 연장)
+                const angleToBackground = Math.atan2(starPos.y - earthY, starPos.x - earthX);
+                const backgroundX = earthX + 1000 * Math.cos(angleToBackground);
+                const backgroundY = earthY + 1000 * Math.sin(angleToBackground);
+                
+                ctx.lineTo(backgroundX, backgroundY);
+                ctx.stroke();
+                
+                ctx.setLineDash([]); // 다시 실선으로 설정
+                
+                // 배경 별 상에 시선이 닿는 '겉보기' 위치 표시
+                ctx.fillStyle = star.color;
+                ctx.beginPath();
+                ctx.arc(backgroundX, backgroundY, 5, 0, Math.PI * 2);
+                ctx.fill();
+            });
+
+            ctx.restore(); // 스케일링/이동 원상 복구
+        }
+
+        // --- 애니메이션 루프 ---
+        let lastTime = 0;
+        function animate(time) {
+            const deltaTime = time - lastTime;
+            lastTime = time;
+
+            // 지구 각도 업데이트
+            // 각도 감소 방향이 북극에서 본 시점의 반시계 방향 공전을 의미합니다.
+            earthAngle -= animationSpeed * deltaTime;
+            if (earthAngle < 0) {
+                earthAngle += Math.PI * 2; // 각도가 음수가 되면 2*PI를 더하여 0~2PI 사이로 유지
+            }
+
+            // 캔버스 그리기
+            drawParallaxDiagram();
+            
+            // 데이터 업데이트
+            updateDataDisplay();
+
+            requestAnimationFrame(animate);
+        }
+
+        // --- 데이터 표시 업데이트 ---
+
+        function updateDataDisplay() {
+            const starX = STARS.find(s => s.id === 'starX');
+            const starY = STARS.find(s => s.id === 'starY');
+            
+            document.getElementById('starXData').innerHTML = 
+                `<span class="font-semibold">${starX.name} (가까운 별)</span><br>
+                시차(p): <span class="font-mono">${starX.data.p_arcsec.toFixed(3)}''</span><br>
+                거리(d): <span class="font-mono">${starX.data.distance_pc.toFixed(3)} pc</span>`;
+
+            document.getElementById('starYData').innerHTML = 
+                `<span class="font-semibold">${starY.name} (먼 별)</span><br>
+                시차(p): <span class="font-mono">${starY.data.p_arcsec.toFixed(3)}''</span><br>
+                거리(d): <span class="font-mono">${starY.data.distance_pc.toFixed(3)} pc</span>`;
+
+             document.getElementById('distanceValue').textContent = `${starX.distance} (상대 거리)`;
+             document.getElementById('speedValue').textContent = `${animationSpeed.toFixed(3)}x`;
+        }
+
+        // --- 이벤트 리스너 ---
+
+        const distanceSlider = document.getElementById('distanceSlider');
+        distanceSlider.addEventListener('input', (e) => {
+            const newDistance = parseFloat(e.target.value);
+            const starX = STARS.find(s => s.id === 'starX');
+            starX.distance = newDistance;
+            // 별 Y는 고정된 값 (600)을 유지합니다.
+        });
+
+        const speedSlider = document.getElementById('speedSlider');
+        speedSlider.addEventListener('input', (e) => {
+            animationSpeed = parseFloat(e.target.value);
+        });
+
+        // 초기 실행
+        window.onload = function() {
+            animate(0); // 애니메이션 시작
+        };
+
+    </script>
+</body>
+</html>
